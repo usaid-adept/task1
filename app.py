@@ -1,49 +1,73 @@
-import os
-import requests
-from dotenv import load_dotenv
+import re
+from openai import OpenAI
 
-load_dotenv()
-api_key = os.getenv('GEMINI_API_KEY')
+# Initialize Ollama Client
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 
 
-temperature = 0.7
-top_p = 0.9
-top_k = 40
-max_output_tokens = 2048
+# Tool A: Keyword Extractor
+def extract_keywords(text):
+    return [word.strip(".,!?") for word in text.split() if len(word) > 4]
 
-url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-headers = {
-    'Content-Type': 'application/json',
-    'X-goog-api-key': api_key
-}
+# Tool B: Mock Web Search
+def mock_web_search(keywords):
+    return f"Search results for: {', '.join(keywords)}. Example content about {keywords[0]} and its importance."
 
-def send_message(message):
-    payload = {
-        "contents": [{"parts": [{"text": message}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "topP": top_p,
-            "topK": top_k,
-            "maxOutputTokens": max_output_tokens
-        }
-    }
-    
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code != 200:
-        print(f"Error: {response.status_code} - {response.text}")
-        return "API Error"
-    data = response.json()
-    return data['candidates'][0]['content']['parts'][0]['text']
 
-print("Gemini Chat - Type 'exit' to quit")
-print(f"Settings: temp={temperature}, top_p={top_p}, top_k={top_k}, max_tokens={max_output_tokens}")
-print("-" * 50)
+# Tool C: Qwen Summarizer
+def summarize_with_qwen(text):
+    completion = client.chat.completions.create(
+        model="qwen3:4b",
+        messages=[
+            {"role": "system", "content": "You are a helpful summarizer."},
+            {"role": "user", "content": f"Summarize the following:\n\n{text}"}
+        ]
+    )
+    return completion.choices[0].message.content
 
-while True:
-    user_input = input("\nYou: ")
-    
-    if user_input.lower() == 'exit':
-        break
-    
-    print("Gemini:", send_message(user_input))
+
+# Tool D: Calculator
+def evaluate_math_expression(expression):
+    try:
+        # VERY simple safe eval for math only
+        result = eval(expression, {"__builtins__": {}}, {})
+        return f"The result is: {result}"
+    except Exception as e:
+        return f"Error evaluating expression: {e}"
+
+
+# Tool Router: Detect if input is math
+def is_math_expression(text):
+    return bool(re.fullmatch(r"[\d\s\+\-\*\/\.\(\)]+", text.strip()))
+
+
+# Main Orchestrator
+def multi_tool_assistant(user_input):
+    print("User Input:", user_input)
+
+    if is_math_expression(user_input):
+        print("🧮 Detected math input. Routing to Calculator.")
+        result = evaluate_math_expression(user_input)
+        print("Tool D - Calculator:\n", result)
+        return
+
+    keywords = extract_keywords(user_input)
+    print("Tool A - Extracted Keywords:", keywords)
+
+    search_results = mock_web_search(keywords)
+    print("Tool B - Search Result:\n", search_results)
+
+    summary = summarize_with_qwen(search_results)
+    print("\nTool C - Qwen Summary:\n", summary)
+
+
+# Run Demo
+if __name__ == "__main__":
+    examples = [
+        "Tell me about the impact of solar power on rural communities.",
+        "25*(3+7)"
+    ]
+    for query in examples:
+        print("\n" + "="*50)
+        multi_tool_assistant(query)
